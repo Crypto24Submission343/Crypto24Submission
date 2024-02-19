@@ -1,0 +1,16 @@
+4c4
+< svpccache=~/bkzwork/bkzcache/svpc
+---
+> svpccache=./bkzwork/bkzcache/svpc
+7c7
+< constantscache=~/bkzwork/bkzcache/const
+---
+> constantscache=./bkzwork/bkzcache/const
+10c10
+< pfcache=~/bkzwork/bkzcache/pf
+---
+> pfcache=./bkzwork/bkzcache/pf
+13c13
+< simcache=~/bkzwork/bkzcache/sim
+---
+> simcache=./bkzwork/bkzcache/sim

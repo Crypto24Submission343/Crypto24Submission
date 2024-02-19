@@ -1,0 +1,902 @@
+diff --git a/tests/test_pruner.cpp b/tests/test_pruner.cpp
+index 836aa6b5..4a5f9cb4 100644
+--- a/tests/test_pruner.cpp
++++ b/tests/test_pruner.cpp
+@@ -13,6 +13,7 @@
+    You should have received a copy of the GNU Lesser General Public License
+    along with fplll. If not, see <http://www.gnu.org/licenses/>. */
+ 
++#include <chrono>
+ #include <cstring>
+ #include <fplll.h>
+ 
+@@ -306,212 +307,368 @@ template <class FT> int test_unpruned()
+   return 0;
+ }
+ 
++
++
++
++#define my_PI "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535940812848111745028410270193852110555964462294895493038196442881097566593344612847564823378678316527120190914564856692346034861045432664821339360726024914127"
++#define my_E "2.71828182845904523536028747135266249775724709369995957496696762772407663035354759457138217852516642742746639193200305992181741359662904357290033429526059563073813232862794349076323382988075319525101901157383418793070215408914993488416750924476146066808226480016847741185374234544243710753907774499207"
++
++template <class FT> FT gaussian_heuristic(FT v, size_t n) {
++    FT pi = FT(my_PI);
++    FT e = FT(my_E);
++    FT pi_part = root(pi * FT(n), 2 * n);
++    FT sqrt_part = sqrt(n/(2. * pi * e));
++    FT v_part = root(v, n);
++    return pi_part * sqrt_part * v_part;
++}
++
++#include "gsaalpha.const"
++
++template <class FT> void gsa_profile_sqr(size_t dim, FT V, vector<FT> &prof_sqr) {
++  if (V <= 0) {
++    throw std::range_error("gsa_profile_sqr: volume must be positive");
++  }
++  FT alpha = gsa_alpha[dim];
++  FT b1norm = pow_si(sqrt(alpha), -(dim-1));
++  prof_sqr.clear();
++  for (size_t i = 1; i <= dim; i++) {
++    FT bistar = pow_si(alpha, i-1) * b1norm;
++    if (V != 1.) {
++      bistar = bistar * root(V, dim); // adjust volume if passed in input
++    }
++    prof_sqr.push_back(pow_si(bistar, 2));
++  }
++}
++
++template <class FT> FT gsa_basis_covol(size_t dim, size_t k, FT V) {
++  vector<FT> prof_sqr;
++  gsa_profile_sqr(dim, V, prof_sqr);
++  FT prod = 1.;
++
++  for (size_t i = 1; i <= k; i++) {
++    prod = prod * prof_sqr.at(i-1);
++  }
++  prod = sqrt(prod);
++
++  if (prod <= 0) {
++    throw std::range_error("gsa_basis_covol: prod is not positive, something is wrong");
++  }
++  return prod;
++}
++
++
+ template <class FT> int test_auto_prune(size_t n)
+ {
++
++  size_t dim = 2 * n;
++
++  cerr << "Effective dimension: " << 2 * n << endl;
++
+   int status = 0;
+   double cost;
+-  ZZ_mat<mpz_t> A(2 * n, 2 * n);
+-  A.gen_qary(n, 30);
+-  ZZ_mat<mpz_t> U;
+-  MatGSO<Z_NR<mpz_t>, FP_NR<double>> M(A, U, U, GSO_DEFAULT);
+-  LLLReduction<Z_NR<mpz_t>, FP_NR<double>> lll_obj =
+-      LLLReduction<Z_NR<mpz_t>, FP_NR<double>>(M, LLL_DEF_DELTA, LLL_DEF_ETA, LLL_DEFAULT);
+-  lll_obj.lll();
+-  FP_NR<double> radius;
+-  M.get_r(radius, 0, 0);
+-  vector<double> r;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    FP_NR<double> x;
+-    M.get_r(x, i, i);
+-    r.push_back(x.get_d());
+-  }
+ 
+   PruningParams pruning;
+   cerr << "Testing auto_prune " << endl;
+-  double overhead = 1.0e6 * n * n;
++  // double overhead = 1.0e2 * n * n;
++  double overhead = 0.0;
+   cerr << "Overhead " << overhead << endl;
+ 
+-  double radius_d = r[0] * .3;
++  FT V = 1.;
++  FT R = gaussian_heuristic(V, dim);
+ 
+-  cerr << endl << "Greedy " << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 20, PRUNER_METRIC_EXPECTED_SOLUTIONS, 0);
+-  cerr << "Expected Solutions " << pruning.expectation << endl;
+-  cerr << "Radius " << radius_d << endl;
+-  cerr << "gh_factor " << pruning.gh_factor << endl;
++  vector<FT> prof_sqr;
++  gsa_profile_sqr(dim, V, prof_sqr);
+ 
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
+-
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
++  if (abs(gsa_basis_covol(dim, dim, V) - V)/V > 1e-10) {
++    cerr << "vol err: " << abs(gsa_basis_covol(dim, dim, V) - V)/V << endl;
++    throw std::range_error("test_auto_prune: volumes don't match up");
+   }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
++  // for (size_t i = 0; i < dim; i++) {
++  //   cerr << "g[" << i << "]: " << prof_sqr.at(i) << ", ";
++  // }
++  // cerr << endl;
+ 
+-  cerr << endl << "Gradient " << endl;
+-  cerr << "Radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_GRADIENT);
+-  status += !(pruning.expectation <= 1.001);
+-  print_status(status);
+-  cerr << "Probability " << pruning.expectation << endl;
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
++
++  vector<double> r_gsa;
++  for (size_t i = 0; i < dim; i++) {
++    r_gsa.push_back(prof_sqr.at(i).get_d());
+   }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
+ 
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
+ 
+-  cerr << endl << "Reprune Gradient " << endl;
+-  cerr << "radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.01, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_GRADIENT | PRUNER_START_FROM_INPUT);
+-  status += !(pruning.expectation <= 1.001);
+-  print_status(status);
+-  cerr << "Probability " << pruning.expectation << endl;
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
+-  }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
+ 
+-  cerr << endl << "NelderMead " << endl;
+-  cerr << "radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_NELDER_MEAD);
++  FT two_to_the_minus_64 = 5.42101086242752217003726400434970855712890625e-20;
++  // cerr << "2^-64: " << two_to_the_minus_64 << endl;
++  // cerr << "2^-64: 5.42101086242752217003726400434970855712890625e-20" << endl;
++
++  FT target = two_to_the_minus_64;
++  // FT target = pow_si(FT(2.), -10);
++
++
++  // cerr << endl << "Zealous (Gradient then NelderMead) " << endl;
++  // cerr << "radius " << radius_d << endl;
++
++  Pruner<FT> pruner(R, overhead, r_gsa, target, PRUNER_METRIC_PROBABILITY_OF_SHORTEST, PRUNER_SINGLE);
++  // Pruner<FT> pruner(R, overhead, r_gsa, target, PRUNER_METRIC_PROBABILITY_OF_SHORTEST, PRUNER_SINGLE | PRUNER_ZEALOUS);
++  pruner.optimize_coefficients(pruning.coefficients);
++  pruner.single_enum_cost(pruning.coefficients, &(pruning.detailed_cost));
++  pruning.gh_factor   = R.get_d() / pruner.gaussian_heuristic().get_d();
++  cerr << "ghfactor" << pruning.gh_factor << endl;
++  pruning.metric      = PRUNER_METRIC_PROBABILITY_OF_SHORTEST;
++  pruning.expectation = pruner.measure_metric(pruning.coefficients);
++
+   status += !(pruning.expectation <= 1.001);
+   print_status(status);
+-  cerr << "Probability " << pruning.expectation << endl;
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
++  if (!(pruning.expectation <= 1.001)) {
++    cerr << "expectation issue" << endl;
+   }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
+ 
+-  cerr << endl << "Reprune NelderMead " << endl;
+-  cerr << "radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_NELDER_MEAD | PRUNER_START_FROM_INPUT);
+-  status += !(pruning.expectation <= 1.001);
+-  print_status(status);
+   cerr << "Probability " << pruning.expectation << endl;
+   cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
++  // cerr << "Predicted cost per Level" << endl;
+   for (size_t i = 0; i < 2 * n; ++i)
+   {
+-    cerr << pruning.detailed_cost[i] << "\t";
++  //   cerr << pruning.detailed_cost[i] << "\t";
+     cost += pruning.detailed_cost[i];
+   }
+   cerr << endl << "Predicted Total Cost " << cost << endl;
++
+   status += !(pruning.expectation > 0.0);
+   print_status(status);
++  if (!(pruning.expectation > 0.0)) {
++    cerr << "expectation issue, 2" << endl;
++  }
++
+   status += !(pruning.gh_factor >= .05);
+   print_status(status);
++  if (!(pruning.gh_factor >= .05)) {
++    cerr << "gh_factor issue" << endl;
++  }
++
+   status += !(pruning.gh_factor < 20.);
+   print_status(status);
++  if (!(pruning.gh_factor < 20.)) {
++    cerr << "gh_factor issue, 2" << endl;
++  }
+ 
+   status += !(pruning.coefficients[0] == 1.0);
+   print_status(status);
++  if (!(pruning.coefficients[0] == 1.0)) {
++    cerr << "coefficients issue" << endl;
++  }
+ 
+-  cerr << endl << "Zealous (Gradient then NelderMead) " << endl;
+-  cerr << "radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_ZEALOUS);
+-  status += !(pruning.expectation <= 1.001);
+-  print_status(status);
+-  cerr << "Probability " << pruning.expectation << endl;
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
++  for (size_t i = 0; i < dim; i++) {
++    cerr << "Ri[" << i << "]: " << pruning.coefficients.at(i) << ", ";
+   }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
++  cerr << endl;
++
++
++
++
++  // cerr << endl << "Greedy " << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 20, PRUNER_METRIC_EXPECTED_SOLUTIONS, 0);
++  // cerr << "Expected Solutions " << pruning.expectation << endl;
++  // cerr << "Radius " << radius_d << endl;
++  // cerr << "gh_factor " << pruning.gh_factor << endl;
++
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
+ 
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
+ 
+-  cerr << endl << "Reprune Zealous " << endl;
+-  cerr << "radius " << radius_d << endl;
+-  prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
+-            PRUNER_ZEALOUS | PRUNER_START_FROM_INPUT);
+-  status += !(pruning.expectation <= 1.001);
+-  print_status(status);
+-  cerr << "Probability " << pruning.expectation << endl;
+-  cost = 0.;
+-  cerr << "Predicted cost per Level" << endl;
+-  for (size_t i = 0; i < 2 * n; ++i)
+-  {
+-    cerr << pruning.detailed_cost[i] << "\t";
+-    cost += pruning.detailed_cost[i];
+-  }
+-  cerr << endl << "Predicted Total Cost " << cost << endl;
+-  status += !(pruning.expectation > 0.0);
+-  print_status(status);
+-  status += !(pruning.gh_factor >= .05);
+-  print_status(status);
+-  status += !(pruning.gh_factor < 20.);
+-  print_status(status);
+ 
+-  status += !(pruning.coefficients[0] == 1.0);
+-  print_status(status);
++
++
++
++
++  // ------------------------------------------------------------------------------------
++  // cerr << endl << "Gradient " << endl;
++  // cerr << "Radius " << radius_d << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
++  //           PRUNER_GRADIENT);
++  // status += !(pruning.expectation <= 1.001);
++  // print_status(status);
++  // cerr << "Probability " << pruning.expectation << endl;
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
++
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
++
++
++
++
++
++
++
++
++  // cerr << endl << "Reprune Gradient " << endl;
++  // cerr << "radius " << radius_d << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 0.01, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
++  //           PRUNER_GRADIENT | PRUNER_START_FROM_INPUT);
++  // status += !(pruning.expectation <= 1.001);
++  // print_status(status);
++  // cerr << "Probability " << pruning.expectation << endl;
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
++
++
++
++
++
++
++
++  // ------------------------------------------------------------------
++  // cerr << endl << "NelderMead " << endl;
++  // cerr << "radius " << radius_d << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
++  //           PRUNER_NELDER_MEAD);
++  // status += !(pruning.expectation <= 1.001);
++  // print_status(status);
++  // cerr << "Probability " << pruning.expectation << endl;
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
++
++
++
++
++
++
++
++
++
++  // cerr << endl << "Reprune NelderMead " << endl;
++  // cerr << "radius " << radius_d << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
++  //           PRUNER_NELDER_MEAD | PRUNER_START_FROM_INPUT);
++  // status += !(pruning.expectation <= 1.001);
++  // print_status(status);
++  // cerr << "Probability " << pruning.expectation << endl;
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
++
++
++
++
++
++
++  // cerr << endl << "Reprune Zealous " << endl;
++  // cerr << "radius " << radius_d << endl;
++  // prune<FT>(pruning, radius_d, overhead, r, 0.3, PRUNER_METRIC_PROBABILITY_OF_SHORTEST,
++  //           PRUNER_ZEALOUS | PRUNER_START_FROM_INPUT);
++  // status += !(pruning.expectation <= 1.001);
++  // print_status(status);
++  // cerr << "Probability " << pruning.expectation << endl;
++  // cost = 0.;
++  // cerr << "Predicted cost per Level" << endl;
++  // for (size_t i = 0; i < 2 * n; ++i)
++  // {
++  //   cerr << pruning.detailed_cost[i] << "\t";
++  //   cost += pruning.detailed_cost[i];
++  // }
++  // cerr << endl << "Predicted Total Cost " << cost << endl;
++  // status += !(pruning.expectation > 0.0);
++  // print_status(status);
++  // status += !(pruning.gh_factor >= .05);
++  // print_status(status);
++  // status += !(pruning.gh_factor < 20.);
++  // print_status(status);
++
++  // status += !(pruning.coefficients[0] == 1.0);
++  // print_status(status);
+ 
+   return status;
+ }
+ 
+-int main()
+-{
++
++int seeking_sufficient_precision() {
+   int status = 0;
++  // cerr.precision(2000);
++  // FP_NR<mpfr_t>::set_prec(700);
++  // // FP_NR<mpfr_t>::set_prec(3500);
++  // FP_NR<mpfr_t> one = 1.0;
++  // FP_NR<mpfr_t> probability = FP_NR<mpfr_t>("4.5684396526338252382364992364040030377637937111248254754091153247524523463564501381474959453716036398772463150644701776452648933510128096067228140523812669267341625591103867213880904946196164844314845100470270854956692978091023286812487123729013937249535915187536234143000832056289093918645247085869905459776740356706901159642920372935318981117113421729220514934676205895034436852614013732539472337330464755254780400390020055635497832502518109870119544270267603430201640387322679737480796605341164514703383662281228370322237260627507399399501708325732197247401235695892692086890848843962658521125294210827515264857760198273336391501245279959971413601956568234574472482562823725845804045802184887356551272747918437347743807045210693922562320931313835673376689624422804394121526689094940307202813671656762668361676747411412308049593652191622046601468308313914654581952153726279732082858482622173320394976912464464905622229053611756833275505377188982493176956429182177747000404011146201810333877801895141601562500000000000e-198");
++
++  // cerr << "probability: " << probability << endl;
++  // cerr << "1 - probabl: " << one - probability << endl;
++  // cerr << "log(1 - pr): " << log(one - probability) << endl;
++
++  // return 0;
++
++#ifdef FPLLL_WITH_QD
++  cerr << endl << "DD enabled" << endl;
++#endif
++  cerr << "C++ version: " << __cplusplus << endl;
++
++  /*
+ #ifdef FPLLL_WITH_QD
+   cerr << endl << "DD" << endl;
+   status += test_unpruned<FP_NR<dd_real>>();
+@@ -568,11 +725,52 @@ int main()
+   status += test_auto_prune<FP_NR<dd_real>>(20);
+   print_status(status);
+ #endif
+-
+-  status += test_auto_prune<FP_NR<double>>(20);
+-  print_status(status);
+-  status += test_auto_prune<FP_NR<double>>(30);
+-  print_status(status);
++  */
++  // status += test_auto_prune<FP_NR<double>>(20);
++  // print_status(status);
++
++  unsigned int prec = 300;
++  // unsigned int prec = 700;
++  for (size_t n = 80; n < 200; n += 5)
++  // size_t n = 85;
++  // size_t n = 50;
++  // size_t n = 80;
++  {
++    int res = 0;
++    // res = test_auto_prune<FP_NR<double>>(n);
++    // res = test_auto_prune<FP_NR<long double>>(n);
++    // res = test_auto_prune<FP_NR<dd_real>>(n);
++    // try {
++    //   res = test_auto_prune<FP_NR<qd_real>>(n);
++    // } catch (...) {
++    //   cerr << "qd_real fails" << endl << endl;
++    // }
++
++    std::chrono::steady_clock::time_point begin;
++    std::chrono::steady_clock::time_point end;
++
++    bool completed = false;
++    while (!completed) {
++      cerr << "Trying precision: " << prec << endl << endl;
++      FP_NR<mpfr_t>::set_prec(prec);
++      begin = std::chrono::steady_clock::now();
++      try {
++        res = test_auto_prune<FP_NR<mpfr_t>>(n);
++        completed = true;
++      } catch (...) {
++        cerr << "mpfr_t(" << prec << ") fails" << endl << endl;
++        prec += 50;
++      }
++      end = std::chrono::steady_clock::now();
++      cout << endl << endl;
++      std::cout << "Time difference = " << std::chrono::duration_cast<std::chrono::seconds>(end - begin).count() << " seconds" << std::endl;
++      cout << endl << endl;
++    }
++    // mpfr_t x;
++    // cerr << "mpfr prec: " << mpfr_get_prec(x) << endl;
++    print_status(res);
++    status += res;
++  }
+ 
+   if (status == 0)
+   {
+@@ -586,3 +784,303 @@ int main()
+ 
+   return 0;
+ }
++
++
++
++/* Command line parsing */
++
++const char *default_target_prob = "0.51";
++
++struct Options
++{
++  Options()
++      : dimension(50), precision(212), probability(default_target_prob), json_output(false), strategy(1)
++  {
++    // other settings ?
++  }
++  size_t dimension;
++  size_t precision;
++  const char *probability;
++  bool json_output;
++  int strategy;
++};
++
++#define ABORT_MSG(y)                         \
++  {                                          \
++    cerr << "test_pruner: " << y << endl;    \
++    exit(1);                                 \
++  }
++#define CHECK(x, y)                          \
++  if (!(x))                                  \
++  ABORT_MSG(y)
++
++void read_options(int argc, char **argv, Options &o)
++{
++  for (int ac = 1; ac < argc; ac++)
++  {
++    if (strcmp(argv[ac], "-d") == 0)
++    {
++      ++ac;
++      CHECK(ac < argc, "missing value after -d switch");
++      size_t dim = atoi(argv[ac]);
++      o.dimension = dim;
++    }
++    else if (strcmp(argv[ac], "-p") == 0)
++    {
++      ++ac;
++      CHECK(ac < argc, "missing value after -p switch");
++      size_t pre = atoi(argv[ac]);
++      o.precision = pre;
++    }
++    else if (strcmp(argv[ac], "-t") == 0)
++    {
++      ++ac;
++      CHECK(ac < argc, "missing value after -t switch");
++      o.probability = argv[ac];
++    }
++    else if (strcmp(argv[ac], "-s") == 0)
++    {
++      ++ac;
++      CHECK(ac < argc, "missing value after -s switch");
++      CHECK(atoi(argv[ac]) >= 0, "strategy must be 0, 1, 2, or 3");
++      CHECK(atoi(argv[ac]) <= 3, "strategy must be 0, 1, 2, or 3");
++      o.strategy = atoi(argv[ac]);
++    }
++    else if (strcmp(argv[ac], "-j") == 0)
++    {
++      o.json_output = true;
++    }
++    else if ((strcmp(argv[ac], "-h") == 0) || (strcmp(argv[ac], "--help") == 0))
++    {
++      cout << "Usage: " << argv[0] << " [options]\n"
++           << "List of options:\n"
++           << "  -d <dimension>          (default=50)  Enumeration dimension\n"
++           << "  -p <precision>          (default=212) Floating point precision\n"
++           << "  -t <target_probability> (default=.51) Single enumeration target success probability\n"
++           << "  -s <strategy>           (default=1)   Optimisation strategy (0 = greedy, 1 = gradient descent, 2 = Nelder-Mead, 3 = zealous)\n"
++           << "  -j                                    Get output in JSON format\n"
++           << "\n";
++      exit(0);
++    }
++  }
++}
++
++template <class FT> int find_cylinder_radii(
++    PruningParams &pruning,
++    size_t dim,
++    FT enum_rad,
++    FT target_prob,
++    vector<double> &prof_sqr,
++    FT &total_cost,
++    vector<double> &level_cost,
++    PrunerFlags flags,
++    double overhead = 1.0
++  )
++{
++  int status = 0;
++
++  Pruner<FT> pruner(enum_rad, overhead, prof_sqr, target_prob, PRUNER_METRIC_PROBABILITY_OF_SHORTEST, flags);
++  pruner.optimize_coefficients(pruning.coefficients);
++  total_cost = pruner.single_enum_cost(pruning.coefficients, &(pruning.detailed_cost));
++  for (size_t i = 0; i < dim; i++) {
++    level_cost[i] = pruning.detailed_cost[i];
++  }
++  pruning.gh_factor   = enum_rad.get_d() / pruner.gaussian_heuristic().get_d();
++  pruning.metric      = PRUNER_METRIC_PROBABILITY_OF_SHORTEST;
++  pruning.expectation = pruner.measure_metric(pruning.coefficients);
++
++  // Sanity checks
++
++  status += !(pruning.expectation <= 1.001);
++  if (!(pruning.expectation <= 1.001)) {
++    cerr << "ERROR: expectation > 1.001" << endl;
++  }
++
++  status += !(pruning.expectation > 0.0);
++  if (!(pruning.expectation > 0.0)) {
++    cerr << "ERROR: expectation <= 0.0" << endl;
++  }
++
++  status += !(pruning.gh_factor >= .05);
++  if (!(pruning.gh_factor >= .05)) {
++    cerr << "ERROR: gh_factor < 0.05" << endl;
++  }
++
++  status += !(pruning.gh_factor < 20.);
++  if (!(pruning.gh_factor < 20.)) {
++    cerr << "ERROR: gh_factor >= 20.0" << endl;
++  }
++
++  status += !(pruning.coefficients[0] == 1.0);
++  if (!(pruning.coefficients[0] == 1.0)) {
++    cerr << "ERROR: Final enumeration radius (R_n) != 1.0" << endl;
++  }
++
++  return status;
++}
++
++template <class FT> int generate_pruning_bounds(size_t dim, FT vol, FT target_prob, PrunerFlags flags, bool json_output)
++{
++  int status = 0;
++
++  // generate GSA profile
++  vector<FT> prof_sqr;
++  gsa_profile_sqr(dim, vol, prof_sqr);
++
++  // generate enumeration radius
++  FT R_sqr = pow_si(gaussian_heuristic(vol, dim), 2);
++
++  // sanity check of volume
++  auto vol_error = abs(gsa_basis_covol(dim, dim, vol) - vol)/vol;
++  if (vol_error > 1e-10) {
++    cout << "vol err: " << vol_error << endl;
++    throw std::range_error("generate_pruning_bounds: volumes don't match up");
++  }
++
++  // pruner takes profile as vector<double>
++  vector<double> prof_sqr_double;
++  for (size_t i = 0; i < dim; i++) {
++    prof_sqr_double.push_back(prof_sqr.at(i).get_d());
++  }
++
++  // prepare clock
++  std::chrono::steady_clock::time_point begin;
++  std::chrono::steady_clock::time_point end;
++  int64_t runtime;
++
++  bool failed = false;
++  PruningParams pruning;
++  FT total_cost = 0.;
++  std::vector<double> level_cost(dim);
++  begin = std::chrono::steady_clock::now();
++  try {
++    status = find_cylinder_radii<FT>(pruning, dim, R_sqr, target_prob, prof_sqr_double, total_cost, level_cost, flags);
++  } catch (...) {
++    failed = true;
++    if (!json_output) {
++      cerr << "Error, likely not sufficient precision." << endl;
++    }
++  }
++  end = std::chrono::steady_clock::now();
++  runtime = std::chrono::duration_cast<std::chrono::seconds>(end - begin).count();
++
++  // generate output
++
++  string pruner_type;
++  switch ((int)flags) {
++    case (PRUNER_SINGLE | PRUNER_ZEALOUS): 
++      pruner_type.assign("zealous");
++      if (!json_output) { cout << "Pruner: zealous (gradient descent, then Nelder-Mead)" << endl; }
++      break;
++    case (PRUNER_SINGLE | PRUNER_GRADIENT):
++      pruner_type.assign("gradient_descent");
++      if (!json_output) { cout << "Pruner: gradient descent" << endl; }
++      break;
++    case (PRUNER_SINGLE | PRUNER_NELDER_MEAD):
++      pruner_type.assign("nelder-mead");
++      if (!json_output) { cout << "Pruner: Nelder-Mead" << endl; }
++      break;
++    case (PRUNER_SINGLE):
++      pruner_type.assign("greedy");
++      if (!json_output) { cout << "Pruner: greedy" << endl; }
++      break;
++    default:
++      pruner_type.assign("unknown");
++      if (!json_output) { cout << "Pruner: unknown" << endl; }
++  }
++  if (!json_output) {
++    cout << "Runtime: " << runtime << " seconds" << endl;
++    if (!failed) {
++      cout << "ghfactor: " << pruning.gh_factor << endl;
++      cout << "Probability: " << pruning.expectation << endl;
++      cout << "Predicted total log cost (accounts for symmetry): " << log2(total_cost.get_d()) << endl;
++      for (size_t i = 0; i < dim; i++) {
++        cout << "Ri[" << i << "]: " << sqrt(pruning.coefficients.at(i)) << ", ";
++      }
++    }
++    cout << endl;
++  }
++
++  if (json_output) {
++    cout << "  \"failed\": " << int(failed) << "," << endl;
++    cout << "  \"runtime\": " << runtime << "," << endl;
++    cout << "  \"pruner\": \"" << pruner_type << "\"," << endl;
++    if (!failed) {
++      cout << "  \"ghfactor\": \"" << pruning.gh_factor << "\"," << endl;
++      cout << "  \"probability\": \"" << pruning.expectation << "\"," << endl;
++      cout << "  \"log_cost\": \"" << log2(total_cost.get_d()) << "\"," << endl;
++      cout << "  \"log_Hk\": [";
++      for (size_t i = dim; i-- > 0; ) {
++        cout << endl << "    \"" << log2(level_cost[i]) << "\"";
++        if (i != 0) {
++          cout << ",";
++        }
++      }
++      cout << endl << "  ]," << endl;
++      cout << "  \"Ri\": [";
++      for (size_t i = dim; i-- > 0; ) {
++        cout << endl << "    \"" << sqrt(pruning.coefficients.at(i)) << "\"";
++        if (i != 0) {
++          cout << ",";
++        }
++      }
++      cout << endl << "  ]," << endl;
++    }
++  }
++
++  return status;
++}
++
++int main(int argc, char **argv)
++{
++  int status = 0;
++  Options o;
++  read_options(argc, argv, o);
++
++  size_t dim = o.dimension;
++  FP_NR<mpfr_t>::set_prec(o.precision);
++  FP_NR<mpfr_t> target_probability(o.probability);
++
++  if (o.json_output) {
++    cout.precision(ceil(o.precision/log2(10)+1));
++    cout << "{" << endl;
++  }
++  else {
++    cout << "Using the following parameters:" << endl;
++    cout << "dimension: " << dim << endl;
++    cout << "precision: " << o.precision << endl;
++    cout << "target probability: " << target_probability << endl;
++    cout << endl;
++  }
++
++  FP_NR<mpfr_t> vol = 1;
++  PrunerFlags flags; 
++  switch (o.strategy)
++  {
++  case 0:
++    flags = (PrunerFlags)(PRUNER_SINGLE);
++    break;
++  case 1:
++    flags = (PrunerFlags)(PRUNER_SINGLE | PRUNER_GRADIENT);
++    break;
++  case 2:
++    flags = (PrunerFlags)(PRUNER_SINGLE | PRUNER_NELDER_MEAD);
++    break;
++  case 3:
++    flags = (PrunerFlags)(PRUNER_SINGLE | PRUNER_ZEALOUS);
++    break;
++  default:
++    exit(1);
++    break;
++  }
++  status = generate_pruning_bounds(dim, vol, target_probability, flags, o.json_output);
++
++  if (o.json_output) {
++    cout << "  \"volume\": \"" << vol << "\"," << endl;
++    cout << "  \"dimension\": " << dim << "," << endl;
++    cout << "  \"precision\": " << o.precision << endl;
++    cout << "}" << endl;
++  }
++
++  return status;
++}

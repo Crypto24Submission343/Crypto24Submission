@@ -1,0 +1,20 @@
+diff --git a/fplll/pruner/pruner.cpp b/fplll/pruner/pruner.cpp
+index 9ecb1631..3563620a 100644
+--- a/fplll/pruner/pruner.cpp
++++ b/fplll/pruner/pruner.cpp
+@@ -16,6 +16,7 @@
+ #include "pruner.h"
+ #include "ballvol.const"
+ #include "factorial.const"
++#include "pruner/gsaalpha.const"
+ #include "fplll.h"
+ 
+ // add components
+@@ -195,6 +196,7 @@ template <class FT> void Pruner<FT>::set_tabulated_consts()
+   {
+     tabulated_factorial[i] = pre_factorial[i];
+     tabulated_ball_vol[i]  = pre_ball_vol[i];
++    tabulated_gsa_alpha[i] = gsa_alpha[i];
+   }
+   tabulated_values_imported = 1;
+   return;

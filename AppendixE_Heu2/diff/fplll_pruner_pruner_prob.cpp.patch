@@ -1,0 +1,87 @@
+diff --git a/fplll/pruner/pruner_prob.cpp b/fplll/pruner/pruner_prob.cpp
+index 0addb30d..7f209e9f 100644
+--- a/fplll/pruner/pruner_prob.cpp
++++ b/fplll/pruner/pruner_prob.cpp
+@@ -4,6 +4,13 @@ FPLLL_BEGIN_NAMESPACE
+ 
+ template <class FT> inline FT Pruner<FT>::svp_probability_evec(/*i*/ const evec &b)
+ {
++  FT vol  = relative_volume(d, b);
++  if (!vol.is_finite())
++  {
++    throw std::range_error("NaN or inf in svp_probability");
++  }
++  return vol;
++
+   evec b_minus_db(d);
+   FT dx = shell_ratio;
+   for (int i = 0; i < d; ++i)
+@@ -13,7 +20,6 @@ template <class FT> inline FT Pruner<FT>::svp_probability_evec(/*i*/ const evec
+       b_minus_db[i] = 1;
+   }
+ 
+-  FT vol  = relative_volume(d, b);
+   FT dxn  = pow_si(dx, 2 * d);
+   FT dvol = dxn * relative_volume(d, b_minus_db) - vol;
+   FT res  = dvol / (dxn - 1.);
+@@ -56,6 +62,7 @@ template <class FT> FT Pruner<FT>::svp_probability_upper(/*i*/ const vec &b)
+  */
+ template <class FT> inline FT Pruner<FT>::svp_probability(/*i*/ const vec &b)
+ {
++
+   /*
+   if (!shape_loaded)
+   {
+@@ -64,13 +71,48 @@ template <class FT> inline FT Pruner<FT>::svp_probability(/*i*/ const vec &b)
+   */
+   if (b.size() == (unsigned int)d)
+   {
+-    return svp_probability_evec(b);
++    evec bb(2 * d);
++    for (int i = 0; i < d; i++) {
++      bb[2*i] = b[i];
++      bb[2*i + 1] = b[i];
++    }
++    return svp_probability(bb);
++    // return svp_probability_evec(b);
+   }
+   else
+   {
+-    FT pl = svp_probability_lower(b);
+-    FT pu = svp_probability_upper(b);
+-    return (pl + pu) / 2.0;
++    // cerr << "using Chen13, Algorithm 12" << endl;
++    // Chen13, Algorithm 12
++    size_t n = b.size();
++    size_t ceil_n_halfs = (n % 2 == 0) ? n/2 : n/2 + 1;
++
++
++    evec rp(ceil_n_halfs - 1);
++    evec rpp(ceil_n_halfs - 1);
++    size_t rp_pop = 0;
++    size_t rpp_pop = 0;
++    for (size_t i = 1; i <= 2 * ceil_n_halfs - 3; i += 2)
++    {
++      rp[rp_pop] = b[i-1]/b[n-1];
++      rp_pop++;
++      // rp.push_back(b[i-1]/b[n-1]);
++    }
++    for (size_t i = 2; i <= 2 * ceil_n_halfs - 2; i += 2)
++    {
++      rpp[rpp_pop] = b[i-1]/b[n-1];
++      rpp_pop++;
++      // rpp.push_back(b[i-1]/b[n-1]);
++    }
++    assert(rp_pop == ceil_n_halfs - 1);
++    assert(rpp_pop == ceil_n_halfs - 1);
++    FT p_low  = relative_volume(rp.size(), rp);
++    FT p_high = relative_volume(rpp.size(), rpp);
++    return (p_low + p_high) / 2.0;
++
++
++    // FT pl = svp_probability_lower(b);
++    // FT pu = svp_probability_upper(b);
++    // return (pl + pu) / 2.0;
+   }
+ }
+ 

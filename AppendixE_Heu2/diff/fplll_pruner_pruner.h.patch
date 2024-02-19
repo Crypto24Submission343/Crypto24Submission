@@ -1,0 +1,29 @@
+diff --git a/fplll/pruner/pruner.h b/fplll/pruner/pruner.h
+index ff02a17a..b05b172d 100644
+--- a/fplll/pruner/pruner.h
++++ b/fplll/pruner/pruner.h
+@@ -607,6 +607,7 @@ private:
+   static bool tabulated_values_imported;  ///< (static) has tabulated constant been imported
+   static FT tabulated_factorial[PRUNER_MAX_N];
+   static FT tabulated_ball_vol[PRUNER_MAX_N];
++  static FT tabulated_gsa_alpha[PRUNER_MAX_N];
+ 
+   FT epsilon  = std::pow(2., -7);  ///< Epsilon to use for numerical differentiation
+   FT min_step = std::pow(2., -6);  ///< Minimal step in a given direction
+@@ -738,6 +739,8 @@ private:
+   FT single_enum_cost_evec(/*i*/ const evec &b, vector<double> *detailed_cost = nullptr);
+   FT single_enum_cost_lower(/*i*/ const vec &b, vector<double> *detailed_cost = nullptr);
+   FT single_enum_cost_upper(/*i*/ const vec &b, vector<double> *detailed_cost = nullptr);
++  inline FT Hk(int k, int n, const std::vector<FT> &Ri_sqr);
++  inline FT gsa_basis_covol(int dim, int k);
+ 
+   /**
+      @brief Compute the success probability for SVP/CVP of a single enumeration
+@@ -1005,6 +1008,7 @@ template <class FT>
+ bool Pruner<FT>::tabulated_values_imported = false;  ///< (static) tabulated value not loaded yet
+ template <class FT> FT Pruner<FT>::tabulated_factorial[PRUNER_MAX_N];
+ template <class FT> FT Pruner<FT>::tabulated_ball_vol[PRUNER_MAX_N];
++template <class FT> FT Pruner<FT>::tabulated_gsa_alpha[PRUNER_MAX_N];
+ 
+ /**
+     enforce (and possible fix) for half/full coefficients

@@ -1,0 +1,4 @@
+137c137
+<    Sphere_random(sol,n,power2_RR(bit)*sqrt(n));
+---
+>    Sphere_random(sol,n,power2_RR(bit)*sqrt((double)n));

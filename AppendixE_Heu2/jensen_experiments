@@ -1,0 +1,9 @@
+# ./enum_subtree_jensen.sh 72 97 1.0 87 40 1 1.1 1337 20
+./enum_subtree_jensen.sh 72 97 1.0 87 40 15 1.1 1337 20
+# ./enum_subtree_jensen.sh 72 97 1.0 87 40 15 1.1 1337 30
+# ./enum_subtree_jensen.sh 72 97 1.0 87 50 15 1.1 1337 20
+./enum_subtree_jensen.sh 72 97 1.0 87 50 15 1.1 1337 30
+# ./enum_subtree_jensen.sh 72 97 1.0 87 60 15 1.1 1337 20
+# ./enum_subtree_jensen.sh 72 97 1.0 87 60 15 1.1 1337 30
+# ./enum_subtree_jensen.sh 72 97 1.0 87 70 10 1.1 1337 20
+# ./enum_subtree_jensen.sh 72 97 1.0 87 70 10 1.1 1337 30

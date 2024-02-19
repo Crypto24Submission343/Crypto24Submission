@@ -1,0 +1,333 @@
+5c5
+< #pragma GCC diagnostic ignored "-Wunknown-attributes"
+---
+> // #pragma GCC diagnostic ignored "-Wunknown-attributes"
+8a9
+> #include <string.h>
+25a27,30
+> #include <sstream>
+> #include <iostream>
+> #include <string>
+> #include <boost/algorithm/string.hpp>
+27,28c32,349
+< int main(int argc, char** argv) {
+< 	bkztest();   
+---
+> 
+> #include "gsaalpha.const"
+> #define my_PI "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798214808651328230664709384460955058223172535940812848111745028410270193852110555964462294895493038196442881097566593344612847564823378678316527120190914564856692346034861045432664821339360726024914127"
+> #define my_E "2.71828182845904523536028747135266249775724709369995957496696762772407663035354759457138217852516642742746639193200305992181741359662904357290033429526059563073813232862794349076323382988075319525101901157383418793070215408914993488416750924476146066808226480016847741185374234544243710753907774499207"
+> 
+> template <class FT> FT root(FT x, size_t n) {
+>   FT logx = log(x);
+>   FT _r = exp(logx / FT(n));
+>   return _r;
+> }
+> 
+> template <class FT> FT gaussian_heuristic(FT v, size_t n) {
+>     FT pi = FT(my_PI);
+>     FT e = FT(my_E);
+>     FT pi_part = root(pi * FT(n), 2 * n);
+>     FT sqrt_part = sqrt(n/(2. * pi * e));
+>     FT v_part = root(v, n);
+>     return pi_part * sqrt_part * v_part;
+> }
+> 
+> template <class FT> void gsa_profile_sqr(size_t dim, FT V, std::vector<FT> &prof_sqr) {
+>   if (V <= 0) {
+>     throw std::range_error("gsa_profile_sqr: volume must be positive");
+>   }
+>   FT alpha = FT(gsa_alpha[dim]);
+>   FT b1norm = pow(sqrt(alpha), -(int(dim)-1));
+>   prof_sqr.clear();
+> 
+>   for (size_t i = 1; i <= dim; i++) {
+>     FT bistar = pow(alpha, i-1) * b1norm;
+>     if (V != 1.) {
+>       bistar = bistar * root(V, dim); // adjust volume if passed in input
+>     }
+>     prof_sqr.push_back(pow(bistar, 2));
+>   }
+> }
+> 
+> template <typename T> void my_print_vec(std::vector<T> &vec, size_t init_coeff = 0)
+> {
+>   size_t n = vec.size();
+>   for (size_t i = init_coeff; i < n; i++) {
+>     std::cout << vec[i];
+>     if (i < n - 1) {
+>       std::cout << ", ";
+>     }
+>   }
+> }
+> 
+> int verbosity_lvls[] = {
+>   VL0, VL1, VL2, VL3, VL4, VL5, VL6, VL7
+> };
+> 
+> int FACE(size_t dim, bkzfloat vol, bkzfloat ptarget, std::vector<bkzfloat> pruning_params, std::string &errormsg, int verbosity, int target, int sharpness) {
+>   PruningFunction PF;
+>   int parallel = omp_get_num_procs();
+> 
+>   // load parameters
+>   PF.rd.resize(dim + 1);
+>   for (int i = 1; i <= dim; i++) {
+>     PF.rd[i] = pow(pruning_params[i-1], 2); // square them
+>   }
+> 
+>   // compute profile probability (should be checkable against our implementation)
+>   // cout << "Rigid_Lower_Prob=" << pruning_func::Rigid_lower_prob(PF) << " ";
+>   // cout << "Rigid_Upper_Prob=" << pruning_func::Rigid_upper_prob(PF) << " ";
+>   // bkzfloat psucc = pruning_func::Approx_prob(PF, parallel, 100);
+>   bkzfloat psucc = (
+>     pruning_func::Rigid_lower_prob(PF) + pruning_func::Rigid_upper_prob(PF)
+>   )/2.;
+>   // std::cout << "ptarg: " << ptarget << std::endl;
+>   // std::cout << "psucc: " << psucc << std::endl;
+> 
+>   if (psucc < 0.5 * ptarget) {
+>     errormsg = std::string("\"psucc < 0.5 * ptarget\"");
+>     return 1;
+>   }
+>   if (psucc > 2.0 * ptarget) {
+>     errormsg = std::string("\"psucc > 2.0 * ptarget\"");
+>     return 1;
+>   }
+>   // cout << "Approx_Prob=" << psucc << endl;
+> 
+>   std::vector<bkzfloat> new_pf(PF.rd);
+>   bkzfloat R_GH = gaussian_heuristic(vol, dim);
+>   std::vector<bkzfloat> gsa_prof_sqr(dim); // not squared
+>   std::vector<bkzfloat> gsa_prof(dim+1);   // not squared, starting at 1
+>   // std::cout << "dim " << dim << " vol "  << vol << std::endl;
+>   gsa_profile_sqr(dim, vol, gsa_prof_sqr);
+>   for (int i = 1; i <= dim; i++) {
+>     gsa_prof[i] = sqrt(gsa_prof_sqr[i-1]);
+>   }
+>   int vl = verbosity_lvls[verbosity];
+>   // std::cout << "GH: " << R_GH << std::endl;
+> 
+>   // std::cout << "gsa: ";
+>   // my_print_vec(gsa_prof);
+>   // std::cout << std::endl;
+> 
+>   // std::cout << "gsa sqr: ";
+>   // my_print_vec(gsa_prof_sqr);
+>   // std::cout << std::endl;
+> 
+>   //Input: valid Pruning function to modify
+>   //       clim is radius (non-squared)
+>   //       cd[1..n] is |b*i| (non-squared)
+>   //       tprob = target probability in (0,1]
+>   //       vl = verbose level
+> 
+>   //Output: found cost
+>   // template <typename T> bkzfloat optimize_pruning_functionCE(std::vector<bkzfloat>& pf,bkzfloat clim,std::vector<T>& c,bkzfloat tprob,int sharpness,int pfinit,int vl,int timemax=10,char opttarget=target_prob);
+> 
+>   bkzfloat cost = pruning_func::optimize_pruning_functionCE<bkzfloat>(
+>       new_pf,             // std::vector<bkzfloat>& pf,
+>       R_GH,               // bkzfloat clim,
+>       gsa_prof,           // std::vector<T>& c,
+>       ptarget,            // bkzfloat tprob,
+>       sharpness,          // int sharpness, // could be pf_crossentropy_exact
+>       0,                  // int pfinit, // 0 = use input pf as the initial
+>       vl,                 // int vl, // verbosity level, between VL0 and VL7
+>       -1,                 // int timemax=10,
+>       target              // char opttarget=target_prob // target_prob or target_volume
+>   );
+> 
+>   // output new succ prob
+>   for (int i = 1; i <= dim; i++) {
+>     PF.rd[i] = new_pf[i]; // square them
+>   }
+>   bkzfloat new_psucc = (
+>     pruning_func::Rigid_lower_prob(PF) + pruning_func::Rigid_upper_prob(PF)
+>   )/2.;
+> 
+>   std::cout << "  \"pr\": " << new_psucc << "," << std::endl;
+>   std::cout << "  \"cost\": " << cost << "," << std::endl;
+>   // std::cout << "new psucc: " << new_psucc << std::endl;
+>   // std::cout << "new cost: " << cost << std::endl;
+> 
+>   // output new pf
+>   for (size_t i = 0; i < new_pf.size(); i++) {
+>     new_pf[i] = sqrt(new_pf[i]);
+>   }
+>   std::cout << "  \"new_pf\": [ ";
+>   my_print_vec(new_pf, 1);
+>   std::cout << " ]," << std::endl;
+> 
+>   return 0;
+> }
+> 
+> 
+> /* Command line parsing */
+> 
+> const char *default_target_prob = "0.0";
+> 
+> struct Options
+> {
+>   Options()
+>       : dimension(0), verbosity(0), opt_target(target_volume), exact(0),
+>         probability(default_target_prob),
+>         initial_pruning_function(NULL)
+>   {
+>     // other settings ?
+>   }
+>   size_t dimension;
+>   int verbosity;
+>   int opt_target;
+>   int exact;
+>   const char *probability;
+>   const char *initial_pruning_function;
+> };
+> 
+> #define ABORT_MSG(y)                         \
+>   {                                          \
+>     cerr << "FACE: " << y << endl;           \
+>     exit(1);                                 \
+>   }
+> #define CHECK(x, y)                          \
+>   if (!(x))                                  \
+>   ABORT_MSG(y)
+> 
+> void read_options(int argc, char **argv, Options &o)
+> {
+>   for (int ac = 1; ac < argc; ac++)
+>   {
+>     if (strcmp(argv[ac], "-d") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -d switch");
+>       size_t dim = atoi(argv[ac]);
+>       o.dimension = dim;
+>     }
+>     else if (strcmp(argv[ac], "-f") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -f switch");
+>       o.initial_pruning_function = argv[ac];
+>     }
+>     else if (strcmp(argv[ac], "-o") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -o switch");
+>       o.opt_target = atoi(argv[ac]);
+>     }
+>     else if (strcmp(argv[ac], "-e") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -e switch");
+>       o.exact = atoi(argv[ac]);
+>     }
+>     else if (strcmp(argv[ac], "-t") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -t switch");
+>       o.probability = argv[ac];
+>     }
+>     else if (strcmp(argv[ac], "-v") == 0)
+>     {
+>       ++ac;
+>       CHECK(ac < argc, "missing value after -v switch");
+>       o.verbosity = atoi(argv[ac]);
+>     }
+>     else if ((strcmp(argv[ac], "-h") == 0) || (strcmp(argv[ac], "--help") == 0))
+>     {
+>       cout << "Usage: " << argv[0] << " [flags]\n"
+>            << "List of flags:\n"
+>            << "  -d <dimension>                 Enumeration dimension\n"
+>            << "  -f <initial pruning function>  Initial pruning parameters (not squared)\n"
+>            << "  -t <target_probability>        Single enumeration target success probability\n"
+>            << "  -v <verbosity>                 Between 0 and 7.\n"
+>            << "  -o <optimization target>       0 = volume, 1 = probability.\n"
+>            << "  -e <exact cross entropy>       0 = no, 1 = yes.\n"
+>            << "\n";
+>       exit(0);
+>     }
+>   }
+> }
+> 
+> int main(int argc, char **argv)
+> {
+>   Options o;
+>   read_options(argc, argv, o);
+> 
+>   size_t dim = o.dimension;
+>   int verbosity = o.verbosity;
+>   bkzfloat target_probability(o.probability);
+>   bkzfloat vol = 1.0;
+>   bool failed = false;
+>   std::string errormsg("\"\"");
+>   int target;
+>   int sharpness;
+> 
+>   if (!failed && (o.opt_target != 0 && o.opt_target != 1)) {
+>     errormsg = std::string("\"Optimisation target must be 0 or 1.\"");
+>     failed = true;
+>   }
+> 
+>   if (o.opt_target == 0) {
+>     target = target_volume;
+>   } else if (o.opt_target == 1) {
+>     target = target_prob;
+>   }
+> 
+>   if (!failed && (o.exact != 0 && o.exact != 1)) {
+>     errormsg = std::string("\"Cross entropy only supports exact = 0 or 1.\"");
+>     failed = true;
+>   }
+> 
+>   if (o.exact == 0) {
+>     sharpness = pf_crossentropy;
+>   } else if (o.exact == 1) {
+>     sharpness = pf_crossentropy_exact;
+>   }
+> 
+>   if (!failed && (verbosity < 0 || verbosity > 7)) {
+>     errormsg = std::string("\"Verbosity must be in [0, 7].\"");
+>     failed = true;
+>   }
+> 
+>   if (!failed && dim == 0) {
+>     errormsg = std::string("\"Dimension must be positive.\"");
+>     failed = true;
+>   }
+> 
+>   if (!failed && (target_probability <= 0.0 || target_probability > 1.0)) {
+>     errormsg = std::string("\"Probability must be in (0,1].\"");
+>     failed = true;
+>   }
+> 
+>   std::vector<bkzfloat> pruning_params;
+>   if (o.initial_pruning_function) {
+>     std::stringstream ss(o.initial_pruning_function);
+>     while(ss.good())
+>     {
+>       std::string substr;
+>       getline(ss, substr, ',');
+>       boost::trim(substr);
+>       pruning_params.push_back(bkzfloat(substr));
+>     }
+>   }
+> 
+>   if (!failed && pruning_params.size() != dim) {
+>     errormsg = std::string("\"Dimension and list of pruning parameters don't match.\"");
+>     failed = true;
+>   }
+>   
+>   std::cout << "{" << endl;
+> 
+>   if (!failed) {
+>     int rv = FACE(dim, vol, target_probability, pruning_params, errormsg, verbosity, target, sharpness);
+>     failed = bool(rv != 0);
+>   }
+> 
+>   std::cout << "  \"init_pf\": [ ";
+>   my_print_vec(pruning_params);
+>   std::cout << " ]," << std::endl;
+>   std::cout << "  \"failed\": " << int(failed) << "," << std::endl;
+>   std::cout << "  \"error\": " << errormsg << std::endl;
+>   cout << "}" << endl;
+> 
+>   return int(failed);

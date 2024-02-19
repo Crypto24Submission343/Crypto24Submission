@@ -1,0 +1,148 @@
+diff --git a/fplll/pruner/pruner_cost.cpp b/fplll/pruner/pruner_cost.cpp
+index def65028..dd5ffa06 100644
+--- a/fplll/pruner/pruner_cost.cpp
++++ b/fplll/pruner/pruner_cost.cpp
+@@ -94,18 +94,107 @@ inline FT Pruner<FT>::single_enum_cost_upper(/*i*/ const vec &b, vector<double>
+   return single_enum_cost_evec(b_upper, detailed_cost);
+ }
+ 
++
++template <class FT> 
++inline FT Pruner<FT>::gsa_basis_covol(int dim, int k) {
++  // # this is for a lattice of volume 1
++  FT alpha = tabulated_gsa_alpha[dim];
++  FT b1norm = pow_si(sqrt(alpha), -(dim-1));
++  FT prod = 1.;
++
++  for (int j = 1; j <= k; j++) {
++    int i = dim - j + 1;
++    FT bistar = pow_si(alpha, i-1) * b1norm;
++    prod *= bistar;
++  }
++
++  assert(prod > 0);
++  return prod;
++}
++
++template <class FT>
++inline FT Pruner<FT>::Hk(int k, int n, const std::vector<FT> &Ri_sqr) {
++// template <class FT> FT Hk(int k, int n, const std::vector<FT> &Ri_sqr) {
++  // we are assuming unit volume
++  // cerr << "H_" << k << endl;
++  FT Nk = 0.;
++  FT two = 2.0;
++  FT covol = gsa_basis_covol(n, k);
++  if (k == 1) {
++    // the 1-ball of radius Ri[0] is the [-Ri[0], Ri[0]] interval
++    FT vol_k_ball_R1 = 2 * sqrt(Ri_sqr[0]);
++    return vol_k_ball_R1 / covol;
++  } else if ( k % 2 == 0 ) {
++
++    std::vector<FT> even_Ri_sqr(k/2);
++    std::vector<FT>  odd_Ri_sqr(k/2);
++
++    for (int i = 0; i < k/2; i++) {
++      even_Ri_sqr[i] = Ri_sqr[2*i];
++      odd_Ri_sqr[i]  = Ri_sqr[2*i+1];
++    }
++
++    FT vol_k_unit_ball = tabulated_ball_vol[k];
++    FT vol_k_ball = vol_k_unit_ball * pow_si(Ri_sqr[k-1], k);
++
++    FT upper_estimate_pr = relative_volume(k/2, even_Ri_sqr);
++    FT lower_estimate_pr = relative_volume(k/2,  odd_Ri_sqr);
++    FT avg_pr = (upper_estimate_pr + lower_estimate_pr)/two;
++
++    return vol_k_ball * avg_pr / covol;
++  } else if (k == n) {
++    // # we are doing extreme pruning, the last level likely is empty
++    return 0.;
++  } else {
++    // # k != 1, k is odd, k != n
++    // # average level above and below
++    FT above = Hk(k-1, n, Ri_sqr);
++    FT below = Hk(k+1, n, Ri_sqr);
++    return (above + below) / 2.;
++  }
++}
++
++
+ /**
+  * single enumation cost
+  */
+ template <class FT>
+ inline FT Pruner<FT>::single_enum_cost(/*i*/ const vec &b, vector<double> *detailed_cost)
+ {
++
+   if (b.size() == (unsigned int)d)
+   {
++    /*
++    evec bb(2 * d);
++    for (int i = 0; i < d; i++) {
++      bb[2*i] = b[i];
++      bb[2*i + 1] = b[i];
++    }
++    return single_enum_cost(bb, detailed_cost);
++    */
++
+     return single_enum_cost_evec(b, detailed_cost);
+   }
+   else
+   {
++    /*
++    FT two = 2.;
++    FT R_sqr = gaussian_heuristic();
++
++    // normalise
++    evec _Ri_sqr(d);
++    for (int i = 0; i < d; i++) {
++      _Ri_sqr[i] = R_sqr * b[i] / b[d-1];
++    }
++
++    FT N = 0.;
++    int n = d;
++    for (int k = 1; k <= d; k++) {
++      N += Hk(k, n, _Ri_sqr);
++    }
++    return N / 2.0;
++    */
++
+     FT cl = single_enum_cost_lower(b, detailed_cost);
+     FT cu = single_enum_cost_upper(b, detailed_cost);
+     return (cl + cu) / 2.0;
+@@ -137,10 +226,34 @@ template <class FT> inline FT Pruner<FT>::target_function(/*i*/ const vec &b)
+ {
+   if (metric == PRUNER_METRIC_PROBABILITY_OF_SHORTEST)
+   {
++    FT one = 1.0;
+     FT probability = svp_probability(b);
+-    FT trials      = log(1.0 - target) / log(1.0 - probability);
++    FT trials      = log(one - target) / log(one - probability);
++    // FT trials      = target / probability; // rough, what we use elsewhere. it does not make a major difference
+     if (!trials.is_finite())
+     {
++      cerr.precision(10000);
++      // cerr << "trials " << trials << endl;
++      // cerr << (log(1.0 - probability) == FT(0.)) << endl;
++      // cerr << (trials == FT(1./0.)) << endl;
++      // cerr << (trials == FT(-1./0.)) << endl;
++
++      // if ((log(1.0 - probability) == FT(0.))) {
++      //   // infinite probability, set very high cost
++      //   cerr << "infinite prob" << endl;
++      //   return FT(pow_si(FT(2.), 1000));
++      // }
++      cerr << "> probability: " << probability << endl;
++      cerr << "> 1.0 - probability: " << one - probability << endl;
++      // cerr << "> (1.0 - probability) == 1: " << ((one - probability) == one) << endl;
++      // cerr << "> (1.0 - probability) == 1: " << ((one - probability) == 1.0) << endl;
++      cerr << "> log(1.0 - probability): " << log(one - probability) << endl;
++      cerr << "> target: " << target << endl;
++      cerr << "> 1.0 - target: " << one - target << endl;
++      cerr << "> log(1.0 - target): " << log(one - target) << endl;
++      // int x = 1;
++      // int y = 0;
++      // int z = x/y;
+       throw std::range_error("NaN or inf in target_function (METRIC_PROBABILITY_OF_SHORTEST). "
+                              "Hint: using a higher precision sometimes helps.");
+     }
